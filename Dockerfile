@@ -45,7 +45,7 @@ RUN set -ex; \
 
 # Configure Flink version
 ENV FLINK_VERSION=1.10.0 \
-    SCALA_VERSION=2.11 \
+    SCALA_VERSION=2.12 \
     GPG_KEY=BB137807CEFBE7DD2616556710B12A1F89C115E8
 
 # Prepare environment
