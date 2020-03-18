@@ -1,3 +1,5 @@
+#!/bin/sh
+
 ###############################################################################
 #  Licensed to the Apache Software Foundation (ASF) under one
 #  or more contributor license agreements.  See the NOTICE file
@@ -16,93 +18,115 @@
 # limitations under the License.
 ###############################################################################
 
-FROM openjdk:8-jdk
+# If unspecified, the hostname of the container is taken as the JobManager address
+JOB_MANAGER_RPC_ADDRESS=${JOB_MANAGER_RPC_ADDRESS:-$(hostname -f)}
+CONF_FILE="${FLINK_HOME}/conf/flink-conf.yaml"
 
-# Install dependencies
-RUN set -ex; \
-  apt-get update; \
-  apt-get -y install libsnappy1v5 gettext-base; \
-  rm -rf /var/lib/apt/lists/*
+drop_privs_cmd() {
+    if [ $(id -u) != 0 ]; then
+        # Don't need to drop privs if EUID != 0
+        return
+    elif [ -x /sbin/su-exec ]; then
+        # Alpine
+        echo su-exec flink
+    else
+        # Others
+        echo gosu flink
+    fi
+}
 
-# Grab gosu for easy step-down from root
-ENV GOSU_VERSION 1.11
-RUN set -ex; \
-  wget -nv -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture)"; \
-  wget -nv -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/$GOSU_VERSION/gosu-$(dpkg --print-architecture).asc"; \
-  export GNUPGHOME="$(mktemp -d)"; \
-  for server in ha.pool.sks-keyservers.net $(shuf -e \
-                          hkp://p80.pool.sks-keyservers.net:80 \
-                          keyserver.ubuntu.com \
-                          hkp://keyserver.ubuntu.com:80 \
-                          pgp.mit.edu) ; do \
-      gpg --batch --keyserver "$server" --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 && break || : ; \
-  done && \
-  gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu; \
-  gpgconf --kill all; \
-  rm -rf "$GNUPGHOME" /usr/local/bin/gosu.asc; \
-  chmod +x /usr/local/bin/gosu; \
-  gosu nobody true
+copy_plugins_if_required() {
+  if [ -z "$ENABLE_BUILT_IN_PLUGINS" ]; then
+    return 0
+  fi
 
-# Configure Flink version
-ENV FLINK_VERSION=1.10.0 \
-    SCALA_VERSION=2.12 \
-    GPG_KEY=BB137807CEFBE7DD2616556710B12A1F89C115E8
+  echo "Enabling required built-in plugins"
+  for target_plugin in $(echo "$ENABLE_BUILT_IN_PLUGINS" | tr ';' ' '); do
+    echo "Linking ${target_plugin} to plugin directory"
+    plugin_name=${target_plugin%.jar}
 
-# Prepare environment
-ENV FLINK_HOME=/opt/flink
-ENV PATH=$FLINK_HOME/bin:$PATH
-RUN groupadd --system --gid=9999 flink && \
-    useradd --system --home-dir $FLINK_HOME --uid=9999 --gid=flink flink
-WORKDIR $FLINK_HOME
+    mkdir -p "${FLINK_HOME}/plugins/${plugin_name}"
+    if [ ! -e "${FLINK_HOME}/opt/${target_plugin}" ]; then
+      echo "Plugin ${target_plugin} does not exist. Exiting."
+      exit 1
+    else
+      ln -fs "${FLINK_HOME}/opt/${target_plugin}" "${FLINK_HOME}/plugins/${plugin_name}"
+      echo "Successfully enabled ${target_plugin}"
+    fi
+  done
+}
 
-ENV FLINK_URL_FILE_PATH=flink/flink-${FLINK_VERSION}/flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz
-# Not all mirrors have the .asc files
-ENV FLINK_TGZ_URL=https://www.apache.org/dyn/closer.cgi?action=download&filename=${FLINK_URL_FILE_PATH} \
-    FLINK_ASC_URL=https://www.apache.org/dist/${FLINK_URL_FILE_PATH}.asc
+if [ "$1" = "help" ]; then
+    echo "Usage: $(basename "$0") (jobmanager|taskmanager|help)"
+    exit 0
+elif [ "$1" = "jobmanager" ]; then
+    shift 1
+    echo "Starting Job Manager"
+    copy_plugins_if_required
 
-# Install Flink
-RUN set -ex; \
-  wget -nv -O flink.tgz "$FLINK_TGZ_URL"; \
-  wget -nv -O flink.tgz.asc "$FLINK_ASC_URL"; \
-  \
-  export GNUPGHOME="$(mktemp -d)"; \
-  for server in ha.pool.sks-keyservers.net $(shuf -e \
-                          hkp://p80.pool.sks-keyservers.net:80 \
-                          keyserver.ubuntu.com \
-                          hkp://keyserver.ubuntu.com:80 \
-                          pgp.mit.edu) ; do \
-      gpg --batch --keyserver "$server" --recv-keys "$GPG_KEY" && break || : ; \
-  done && \
-  gpg --batch --verify flink.tgz.asc flink.tgz; \
-  gpgconf --kill all; \
-  rm -rf "$GNUPGHOME" flink.tgz.asc; \
-  \
-  tar -xf flink.tgz --strip-components=1; \
-  rm flink.tgz; \
-  \
-  chown -R flink:flink .;
+    if grep -E "^jobmanager\.rpc\.address:.*" "${CONF_FILE}" > /dev/null; then
+        sed -i -e "s/jobmanager\.rpc\.address:.*/jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}/g" "${CONF_FILE}"
+    else
+        echo "jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}" >> "${CONF_FILE}"
+    fi
 
-# arthas
-ARG ARTHAS_VERSION="3.1.7"
-ARG MIRROR=false
+    if grep -E "^blob\.server\.port:.*" "${CONF_FILE}" > /dev/null; then
+        sed -i -e "s/blob\.server\.port:.*/blob.server.port: 6124/g" "${CONF_FILE}"
+    else
+        echo "blob.server.port: 6124" >> "${CONF_FILE}"
+    fi
 
-ENV MAVEN_HOST=http://repo1.maven.org/maven2 \
-    ALPINE_HOST=dl-cdn.alpinelinux.org \
-    MIRROR_MAVEN_HOST=http://maven.aliyun.com/repository/public \
-    MIRROR_ALPINE_HOST=mirrors.aliyun.com 
+    if grep -E "^query\.server\.port:.*" "${CONF_FILE}" > /dev/null; then
+        sed -i -e "s/query\.server\.port:.*/query.server.port: 6125/g" "${CONF_FILE}"
+    else
+        echo "query.server.port: 6125" >> "${CONF_FILE}"
+    fi
 
-# if use mirror change to aliyun mirror site
-RUN if $MIRROR; then MAVEN_HOST=${MIRROR_MAVEN_HOST} ;ALPINE_HOST=${MIRROR_ALPINE_HOST} ; sed -i "s/dl-cdn.alpinelinux.org/${ALPINE_HOST}/g" /etc/apk/repositories ; fi && \
-    # https://github.com/docker-library/openjdk/issues/76
-    apk add --no-cache tini && \ 
-    # download & install arthas
-    wget -qO /tmp/arthas.zip "${MAVEN_HOST}/com/taobao/arthas/arthas-packaging/${ARTHAS_VERSION}/arthas-packaging-${ARTHAS_VERSION}-bin.zip" && \
-    mkdir -p /opt/arthas && \
-    unzip /tmp/arthas.zip -d /opt/arthas && \
-    rm /tmp/arthas.zip
+    if [ -n "${FLINK_PROPERTIES}" ]; then
+        echo "${FLINK_PROPERTIES}" >> "${CONF_FILE}"
+    fi
+    envsubst < "${CONF_FILE}" > "${CONF_FILE}.tmp" && mv "${CONF_FILE}.tmp" "${CONF_FILE}"
 
-# Configure container
-COPY docker-entrypoint.sh /
-ENTRYPOINT [ "/sbin/tini", "--", "/docker-entrypoint.sh"]
-EXPOSE 6123 8081
-CMD ["help"]
+    echo "config file: " && grep '^[^\n#]' "${CONF_FILE}"
+    exec $(drop_privs_cmd) "$FLINK_HOME/bin/jobmanager.sh" start-foreground "$@"
+elif [ "$1" = "taskmanager" ]; then
+    shift 1
+    echo "Starting Task Manager"
+    copy_plugins_if_required
+
+    TASK_MANAGER_NUMBER_OF_TASK_SLOTS=${TASK_MANAGER_NUMBER_OF_TASK_SLOTS:-$(grep -c ^processor /proc/cpuinfo)}
+
+    if grep -E "^jobmanager\.rpc\.address:.*" "${CONF_FILE}" > /dev/null; then
+        sed -i -e "s/jobmanager\.rpc\.address:.*/jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}/g" "${CONF_FILE}"
+    else
+        echo "jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}" >> "${CONF_FILE}"
+    fi
+
+    if grep -E "^taskmanager\.numberOfTaskSlots:.*" "${CONF_FILE}" > /dev/null; then
+        sed -i -e "s/taskmanager\.numberOfTaskSlots:.*/taskmanager.numberOfTaskSlots: ${TASK_MANAGER_NUMBER_OF_TASK_SLOTS}/g" "${CONF_FILE}"
+    else
+        echo "taskmanager.numberOfTaskSlots: ${TASK_MANAGER_NUMBER_OF_TASK_SLOTS}" >> "${CONF_FILE}"
+    fi
+
+    if grep -E "^blob\.server\.port:.*" "${CONF_FILE}" > /dev/null; then
+        sed -i -e "s/blob\.server\.port:.*/blob.server.port: 6124/g" "${CONF_FILE}"
+    else
+        echo "blob.server.port: 6124" >> "${CONF_FILE}"
+    fi
+
+    if grep -E "^query\.server\.port:.*" "${CONF_FILE}" > /dev/null; then
+        sed -i -e "s/query\.server\.port:.*/query.server.port: 6125/g" "${CONF_FILE}"
+    else
+        echo "query.server.port: 6125" >> "${CONF_FILE}"
+    fi
+
+    if [ -n "${FLINK_PROPERTIES}" ]; then
+        echo "${FLINK_PROPERTIES}" >> "${CONF_FILE}"
+    fi
+    envsubst < "${CONF_FILE}" > "${CONF_FILE}.tmp" && mv "${CONF_FILE}.tmp" "${CONF_FILE}"
+
+    echo "config file: " && grep '^[^\n#]' "${CONF_FILE}"
+    exec $(drop_privs_cmd) "$FLINK_HOME/bin/taskmanager.sh" start-foreground "$@"
+fi
+
+exec "$@"
