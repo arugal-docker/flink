@@ -82,27 +82,12 @@ RUN set -ex; \
   \
   chown -R flink:flink .;
 
-# arthas
-ARG ARTHAS_VERSION="3.1.7"
-ARG MIRROR=false
-
-ENV MAVEN_HOST=http://repo1.maven.org/maven2 \
-    ALPINE_HOST=dl-cdn.alpinelinux.org \
-    MIRROR_MAVEN_HOST=http://maven.aliyun.com/repository/public \
-    MIRROR_ALPINE_HOST=mirrors.aliyun.com 
-
-# if use mirror change to aliyun mirror site
-RUN if $MIRROR; then MAVEN_HOST=${MIRROR_MAVEN_HOST} ;ALPINE_HOST=${MIRROR_ALPINE_HOST} ; sed -i "s/dl-cdn.alpinelinux.org/${ALPINE_HOST}/g" /etc/apk/repositories ; fi && \
-    # https://github.com/docker-library/openjdk/issues/76
-    apk add --no-cache tini && \ 
-    # download & install arthas
-    wget -qO /tmp/arthas.zip "${MAVEN_HOST}/com/taobao/arthas/arthas-packaging/${ARTHAS_VERSION}/arthas-packaging-${ARTHAS_VERSION}-bin.zip" && \
-    mkdir -p /opt/arthas && \
-    unzip /tmp/arthas.zip -d /opt/arthas && \
-    rm /tmp/arthas.zip
+ARG tini_version=v0.18.0
+ADD https://github.com/krallin/tini/releases/download/${tini_version}/tini-static /usr/bin/tini
+RUN chmod +x /usr/bin/tini
 
 # Configure container
 COPY docker-entrypoint.sh /
-ENTRYPOINT ["/sbin/tini", "--", "/docker-entrypoint.sh"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
 EXPOSE 6123 8081
 CMD ["help"]
