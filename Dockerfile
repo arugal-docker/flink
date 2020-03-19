@@ -88,7 +88,7 @@ ADD https://github.com/krallin/tini/releases/download/${tini_version}/tini-stati
 RUN chmod +x /usr/bin/tini
 
 # metrics prometheus
-RUN wget https://repo1.maven.org/maven2/org/apache/flink/flink-metrics-prometheus_2.12/1.10.0/flink-metrics-prometheus_2.12-1.10.0.jar
+RUN curl https://repo1.maven.org/maven2/org/apache/flink/flink-metrics-prometheus_2.12/1.10.0/flink-metrics-prometheus_2.12-1.10.0.jar -o /opt/flink/lib/flink-metrics-prometheus_2.12-1.10.0.jar
 
 # Configure container
 COPY docker-entrypoint.sh /
