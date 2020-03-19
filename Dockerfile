@@ -82,9 +82,13 @@ RUN set -ex; \
   \
   chown -R flink:flink .;
 
+# tini
 ARG tini_version=v0.18.0
 ADD https://github.com/krallin/tini/releases/download/${tini_version}/tini-static /usr/bin/tini
 RUN chmod +x /usr/bin/tini
+
+# metrics prometheus
+RUN wget https://repo1.maven.org/maven2/org/apache/flink/flink-metrics-prometheus_2.12/1.10.0/flink-metrics-prometheus_2.12-1.10.0.jar
 
 # Configure container
 COPY docker-entrypoint.sh /
