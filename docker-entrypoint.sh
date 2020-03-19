@@ -81,6 +81,9 @@ elif [ "$1" = "jobmanager" ]; then
     else
         echo "query.server.port: 6125" >> "${CONF_FILE}"
     fi
+    
+    echo "metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter" >> "${CONF_FILE}"
+    echo "metrics.reporter.prom.port: 9000" >> "${CONF_FILE}"
 
     if [ -n "${FLINK_PROPERTIES}" ]; then
         echo "${FLINK_PROPERTIES}" >> "${CONF_FILE}"
@@ -119,6 +122,9 @@ elif [ "$1" = "taskmanager" ]; then
     else
         echo "query.server.port: 6125" >> "${CONF_FILE}"
     fi
+    
+    echo "metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter" >> "${CONF_FILE}"
+    echo "metrics.reporter.prom.port: 9000" >> "${CONF_FILE}"
 
     if [ -n "${FLINK_PROPERTIES}" ]; then
         echo "${FLINK_PROPERTIES}" >> "${CONF_FILE}"
