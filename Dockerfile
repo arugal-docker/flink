@@ -92,6 +92,7 @@ RUN wget https://repo1.maven.org/maven2/org/apache/flink/flink-metrics-prometheu
 
 # Configure container
 COPY docker-entrypoint.sh /
+RUN chmod +x /docker-entrypoint.sh
 ENTRYPOINT ["/usr/bin/tini", "--", "/docker-entrypoint.sh"]
 EXPOSE 6123 8081
 CMD ["help"]
